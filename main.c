@@ -140,3 +140,129 @@ void readFile(Task * task) {
     free(task -> filename); // freeing the memory 
     //return NULL;
 }
+
+
+void submitTask(Task task) {
+    // when ever a work is submitted automatically new thread takes it place
+    pthread_mutex_lock( & mutexQueueThreads);
+    taskQueue[taskCount] = task;
+    taskCount++; // incrementing thread count
+    pthread_mutex_unlock( & mutexQueueThreads);
+    pthread_cond_signal( & condQueueThreads);
+}
+
+void * startThread(void * args) {
+    // starting a thread to work for one file 
+    while (stopThreadPool) {
+        Task task;
+        pthread_mutex_lock( & mutexQueueThreads); // locking mutex so that we can get the task number
+        while (taskCount == 0) {
+            pthread_cond_wait(& condQueueThreads, & mutexQueueThreads);
+        }
+        task = taskQueue[0];
+        int i;
+        for (i = 0; i < taskCount - 1; i++) {
+            taskQueue[i] = taskQueue[i + 1];
+        }
+        taskCount--; // decrementing task number
+        pthread_mutex_unlock(&mutexQueueThreads);
+        readFile( & task);
+        finishedTaskCount++; // incrementing the finished tasks 
+        if (finishedTaskCount == totalTask) {
+            // after all the worker threads are finished  freeing memory and printing info message
+            printf("MAIN THREAD: All done (successfully read %d words with %d threads from %d files).\n", memoryIndex, th_number, totalTask);
+            pthread_mutex_destroy(&searchLock);
+            pthread_mutex_destroy(&arrayFull);
+            free(memory);
+            free( * memory);
+            //exiting the code after all work is done.
+            exit(0);
+        }
+    }
+    return NULL;
+}
+
+
+int main(int argc, char ** argv) {
+
+    if (argc > 5 || argc < 4) { // if 
+        fprintf(stderr, "ERROR: Invalid arguments");
+        fprintf(stderr, "USAGE: ./a.out -d <directoryName> -n <#ofThreads>");
+        return 1;
+    }
+    memory = createMemory();// creating array with size of 8
+    int counter = 0;
+    char arr[100][80];
+    int threadNumber = strtol(argv[4], NULL, 10); // getting values from argv
+    th_number = threadNumber;
+    pthread_t th[threadNumber];
+
+    DIR * d;
+    struct dirent * dir;
+    d = opendir(argv[2]);  //getting path 
+    path = argv[2];
+
+    if (d) {
+        while ((dir = readdir(d)) != NULL) {
+            const size_t len = strlen(dir -> d_name);
+            if (len > 4 && dir -> d_name[len - 4] == '.' && dir -> d_name[len - 3] == 't' && dir -> d_name[len - 2] == 'x' && dir -> d_name[len - 1] == 't') {
+                //printf(" %s \n", dir -> d_name);
+                strcpy(arr[counter], dir -> d_name); // reading all the filenames inside given directoy 
+                // and then we soted all of them inside an array 
+                totalTask++;
+                counter++;
+            }
+        }
+        closedir(d);
+    }
+
+    int max_file = counter + 1;
+    sem_init( &threadQueueeSemephore, 0, th_number);
+
+    pthread_mutex_init(& mutexQueueThreads, NULL); // define mutex
+    pthread_cond_init(& condQueueThreads, NULL);
+    stopThreadPool = true; // gicing true to search thread pool
+
+    if (pthread_mutex_init( & searchLock, NULL) != 0) {
+        printf("\n SearchLock Mutex init has failed.\n");
+        return 1;
+    }
+
+    if (pthread_mutex_init( & arrayFull, NULL) != 0) {
+        printf("\n arrayFull Mutex init has failed.\n");
+        return 1;
+    }
+
+    for (int i = 0; i < th_number; ++i) {
+        // creating threads for the multi thread 
+        if (pthread_create( & th[i], NULL, & startThread, NULL)) {
+            return 1;
+        }
+    }
+
+    for (int i = 0; i < counter; i++) {
+        //creating the work for the threads
+        char * str = malloc(50 * sizeof(char));// creating malloc for  filename
+
+        strcpy(str, arr[i]);
+        Task t = {
+                .filename = str // giving filename
+        };
+        submitTask(t);
+    }
+
+    for (int i = 0; i < th_number; ++i) {
+        if (pthread_join(th[i], NULL)) {
+            return 3;
+        }
+    }
+    pthread_exit(NULL); // clearing the main thread
+
+    // pthread_mutex_destroy( & searchLock);
+    // pthread_mutex_destroy( & arrayFull);
+    sem_destroy( & threadQueueeSemephore);
+    pthread_mutex_destroy( & mutexQueueThreads);
+    pthread_cond_destroy( & condQueueThreads);
+    return (0);
+}
+
